@@ -280,6 +280,8 @@ fn install_theme(ctx: &egui::Context) {
 
 fn install_chinese_font(ctx: &egui::Context) {
     const FONT_PATHS: &[&str] = &[
+        "C:\\Windows\\Fonts\\msyh.ttc",              // Windows 微软雅黑
+        "C:\\Windows\\Fonts\\simsun.ttc",             // Windows 宋体
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         "/System/Library/Fonts/Hiragino Sans GB.ttc",
         "/System/Library/Fonts/STHeiti Medium.ttc",
