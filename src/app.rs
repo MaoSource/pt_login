@@ -12,8 +12,7 @@ use tokio::task::JoinHandle;
 
 const QR_TTL: Duration = Duration::from_secs(120);
 
-// Design tokens — mirror `colors_and_type.css` from the Claude Design bundle
-// so the egui surface stays in lockstep with the source mockup.
+// Design tokens — mirror `colors_and_type.css` from the Claude Design bundle.
 mod tok {
     use eframe::egui::Color32;
     pub const BG: Color32 = Color32::from_rgb(255, 255, 255);
@@ -27,6 +26,7 @@ mod tok {
     pub const BORDER: Color32 = Color32::from_rgb(229, 229, 229);
     pub const BORDER_SOFT: Color32 = Color32::from_rgb(236, 236, 236);
     pub const ACCENT: Color32 = Color32::from_rgb(16, 163, 127);
+    pub const ACCENT_HOVER: Color32 = Color32::from_rgb(14, 140, 108);
     pub const INFO: Color32 = Color32::from_rgb(59, 130, 246);
     pub const WARN: Color32 = Color32::from_rgb(217, 119, 6);
     pub const DANGER: Color32 = Color32::from_rgb(239, 68, 68);
@@ -35,6 +35,179 @@ mod tok {
     pub const CODE_FG: Color32 = Color32::from_rgb(230, 230, 230);
     pub const CODE_TIME: Color32 = Color32::from_rgb(86, 88, 105);
     pub const CODE_SUCCESS: Color32 = Color32::from_rgb(25, 195, 125);
+}
+
+// Hand-drawn line icons matching the design's stroke aesthetic. Each function
+// fits the icon inside the supplied `Rect` and uses the supplied color.
+mod icons {
+    use eframe::egui::{
+        pos2, Color32, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, Vec2,
+    };
+    use std::f32::consts::PI;
+
+    pub fn refresh(p: &Painter, r: Rect, color: Color32) {
+        let sw = (r.width() / 12.0).max(1.3);
+        let stroke = Stroke::new(sw, color);
+        let c = r.center();
+        let radius = r.width() * 0.34;
+
+        // ~306° arc; the arrowhead at the end fills the gap.
+        let start_a = 0.0_f32;
+        let end_a = 1.7 * PI;
+        let segs = 28;
+        let pts: Vec<Pos2> = (0..=segs)
+            .map(|i| {
+                let t = i as f32 / segs as f32;
+                let a = start_a + (end_a - start_a) * t;
+                c + Vec2::new(a.cos(), a.sin()) * radius
+            })
+            .collect();
+        p.add(Shape::line(pts, stroke));
+
+        // Arrowhead at the arc's end, pointing along the tangent (the
+        // direction the arc is heading at that point).
+        let tip = c + Vec2::new(end_a.cos(), end_a.sin()) * radius;
+        let tangent = Vec2::new(-end_a.sin(), end_a.cos());
+        let radial = Vec2::new(end_a.cos(), end_a.sin());
+        let asize = sw * 2.4;
+
+        let apex = tip + tangent * asize;
+        let wing_outer = tip + radial * asize * 0.8;
+        let wing_inner = tip - radial * asize * 0.8;
+        p.add(Shape::convex_polygon(
+            vec![apex, wing_outer, wing_inner],
+            color,
+            Stroke::NONE,
+        ));
+    }
+
+    pub fn loading(p: &Painter, r: Rect, color: Color32, time: f64) {
+        let sw = (r.width() / 11.0).max(1.5);
+        let radius = r.width() * 0.36;
+        let c = r.center();
+        // Faint background ring.
+        p.circle_stroke(
+            c,
+            radius,
+            Stroke::new(
+                sw,
+                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 80),
+            ),
+        );
+        // Foreground arc rotating once per ~0.7s, like the design's spinner.
+        let rot = (time * 9.0) as f32;
+        let arc_len = PI * 0.6;
+        let segs = 18;
+        let pts: Vec<Pos2> = (0..=segs)
+            .map(|i| {
+                let t = i as f32 / segs as f32;
+                let a = rot + arc_len * t;
+                c + Vec2::new(a.cos(), a.sin()) * radius
+            })
+            .collect();
+        p.add(Shape::line(pts, Stroke::new(sw, color)));
+    }
+
+    pub fn trash(p: &Painter, r: Rect, color: Color32) {
+        let sw = (r.width() / 12.0).max(1.4);
+        let stroke = Stroke::new(sw, color);
+        let c = r.center();
+        let w = r.width() * 0.55;
+        let h = r.height() * 0.6;
+        let top = c.y - h * 0.3;
+        let bot = c.y + h * 0.5;
+        let left = c.x - w * 0.5;
+        let right = c.x + w * 0.5;
+
+        // Lid line.
+        p.line_segment(
+            [pos2(left - 1.5, top), pos2(right + 1.5, top)],
+            stroke,
+        );
+        // Handle bracket above the lid.
+        let hw = w * 0.25;
+        p.line_segment(
+            [pos2(c.x - hw, top - 2.5), pos2(c.x + hw, top - 2.5)],
+            stroke,
+        );
+        p.line_segment([pos2(c.x - hw, top - 2.5), pos2(c.x - hw, top)], stroke);
+        p.line_segment([pos2(c.x + hw, top - 2.5), pos2(c.x + hw, top)], stroke);
+        // Body sides + bottom.
+        p.line_segment(
+            [pos2(left + 1.0, top + 1.5), pos2(left + 1.5, bot)],
+            stroke,
+        );
+        p.line_segment(
+            [pos2(right - 1.0, top + 1.5), pos2(right - 1.5, bot)],
+            stroke,
+        );
+        p.line_segment([pos2(left + 1.5, bot), pos2(right - 1.5, bot)], stroke);
+    }
+
+    pub fn copy(p: &Painter, r: Rect, color: Color32) {
+        let sw = (r.width() / 12.0).max(1.3);
+        let stroke = Stroke::new(sw, color);
+        let c = r.center();
+        let s = r.width() * 0.46;
+        let off = s * 0.3;
+
+        // Front (foreground) rounded square, shifted toward lower-right.
+        let front = Rect::from_center_size(c + Vec2::splat(off * 0.5), Vec2::splat(s));
+        p.rect_stroke(front, 1.5, stroke, StrokeKind::Middle);
+
+        // Back square: only its top + left edges show (the L behind front).
+        let back_tl = front.left_top() - Vec2::splat(off);
+        let back_tr = pos2(back_tl.x + s, back_tl.y);
+        let back_bl = pos2(back_tl.x, back_tl.y + s);
+        p.line_segment([back_tl, back_tr], stroke);
+        p.line_segment([back_tl, back_bl], stroke);
+    }
+
+    pub fn terminal(p: &Painter, r: Rect, color: Color32) {
+        let sw = (r.width() / 11.0).max(1.6);
+        let stroke = Stroke::new(sw, color);
+        let c = r.center();
+        let s = r.width() * 0.32;
+        // ">" chevron.
+        p.line_segment(
+            [c + Vec2::new(-s, -s * 0.85), c + Vec2::new(0.0, 0.0)],
+            stroke,
+        );
+        p.line_segment(
+            [c + Vec2::new(0.0, 0.0), c + Vec2::new(-s, s * 0.85)],
+            stroke,
+        );
+        // Underscore.
+        p.line_segment(
+            [
+                c + Vec2::new(s * 0.1, s * 0.85),
+                c + Vec2::new(s * 0.95, s * 0.85),
+            ],
+            stroke,
+        );
+    }
+
+    pub fn scan(p: &Painter, r: Rect, color: Color32) {
+        let sw = (r.width() / 12.0).max(1.4);
+        let stroke = Stroke::new(sw, color);
+        let c = r.center();
+        let s = r.width() * 0.4;
+        let cn = s * 0.42;
+        // Four L-shaped corners.
+        for &(sx, sy) in &[(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            let corner = c + Vec2::new(sx * s, sy * s);
+            p.line_segment([corner, corner + Vec2::new(-sx * cn, 0.0)], stroke);
+            p.line_segment([corner, corner + Vec2::new(0.0, -sy * cn)], stroke);
+        }
+        // Center horizontal scan line.
+        p.line_segment([c + Vec2::new(-s, 0.0), c + Vec2::new(s, 0.0)], stroke);
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum BtnStyle {
+    Primary,
+    Secondary,
 }
 
 pub struct DaojuLoginApp {
@@ -232,6 +405,22 @@ impl DaojuLoginApp {
             .map(|loaded_at| QR_TTL.saturating_sub(loaded_at.elapsed()))
     }
 
+    fn qr_unusable(&self) -> bool {
+        matches!(
+            self.status,
+            LoginStatus::Expired | LoginStatus::Rejected | LoginStatus::Failed
+        )
+    }
+
+    fn qr_unusable_caption(&self) -> &'static str {
+        match self.status {
+            LoginStatus::Expired => "二维码已失效",
+            LoginStatus::Rejected => "本次登录已取消",
+            LoginStatus::Failed => "登录失败",
+            _ => "",
+        }
+    }
+
     fn append_status_log(&mut self, status: &LoginStatus) {
         let message = match status {
             LoginStatus::Idle => return,
@@ -366,9 +555,9 @@ impl eframe::App for DaojuLoginApp {
 
         self.drain_events(ctx);
 
-        // Drive the countdown digit, the blinking cursor, and the pulse-ring
-        // animations off a steady half-second tick.
-        ctx.request_repaint_after(Duration::from_millis(500));
+        // Drive countdown digits, blinking cursor, pulse-ring, and the
+        // in-button spinner off a steady tick.
+        ctx.request_repaint_after(Duration::from_millis(50));
 
         egui::CentralPanel::default()
             .frame(
@@ -404,13 +593,19 @@ fn render_top_area(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
     let total_width = ui.available_width();
     let area_top = ui.cursor().top();
 
+    let mut click_to_refresh = false;
+
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = Vec2::ZERO;
 
         ui.allocate_ui_with_layout(
             Vec2::new(200.0, top_height),
             Layout::top_down(Align::Center),
-            |ui| render_qr_section(ui, app, top_height),
+            |ui| {
+                if render_qr_section(ui, app, top_height) {
+                    click_to_refresh = true;
+                }
+            },
         );
 
         let sep_x = ui.cursor().left() + 0.5;
@@ -433,9 +628,17 @@ fn render_top_area(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
         ui.cursor().top(),
         Stroke::new(1.0, tok::BORDER_SOFT),
     );
+
+    if click_to_refresh {
+        app.start_login();
+    }
 }
 
-fn render_qr_section(ui: &mut egui::Ui, app: &DaojuLoginApp, height: f32) {
+/// Returns `true` if the user clicked the QR card while it was unusable.
+fn render_qr_section(ui: &mut egui::Ui, app: &DaojuLoginApp, height: f32) -> bool {
+    let unusable = app.qr_unusable();
+    let mut clicked_to_refresh = false;
+
     egui::Frame::default()
         .fill(tok::BG_SOFT)
         .inner_margin(Margin::symmetric(20, 24))
@@ -458,30 +661,59 @@ fn render_qr_section(ui: &mut egui::Ui, app: &DaojuLoginApp, height: f32) {
                     .show(ui, |ui| {
                         let inner = Vec2::splat(124.0);
                         if let Some(texture) = &app.qr_texture {
-                            let resp = ui.image((texture.id(), inner));
+                            let sense = if unusable {
+                                Sense::click()
+                            } else {
+                                Sense::hover()
+                            };
+                            let resp = ui.add(
+                                egui::Image::new((texture.id(), inner)).sense(sense),
+                            );
 
-                            if matches!(app.status, LoginStatus::Expired) {
-                                paint_expired_overlay(ui, resp.rect);
+                            if unusable {
+                                paint_unusable_overlay(ui, resp.rect, app.qr_unusable_caption());
+                                if resp.clicked() {
+                                    clicked_to_refresh = true;
+                                }
+                                if resp.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
                             }
                         } else {
-                            ui.set_min_size(inner);
-                            ui.centered_and_justified(|ui| {
-                                ui.vertical_centered(|ui| {
-                                    ui.add(egui::Spinner::new().size(22.0).color(tok::ACCENT));
+                            ui.allocate_ui_with_layout(
+                                inner,
+                                Layout::top_down(Align::Center),
+                                |ui| {
+                                    ui.set_min_size(inner);
+                                    let content_h = 22.0 + 8.0 + 14.0;
+                                    let pad = ((inner.y - content_h) * 0.5).max(0.0);
+                                    ui.add_space(pad);
+                                    ui.add(
+                                        egui::Spinner::new()
+                                            .size(22.0)
+                                            .color(tok::ACCENT),
+                                    );
                                     ui.add_space(8.0);
                                     ui.label(
                                         RichText::new("获取中...")
                                             .small()
                                             .color(tok::TEXT_MUTE),
                                     );
-                                });
-                            });
+                                },
+                            );
                         }
                     });
 
                 ui.add_space(12.0);
-                match app.qr_remaining() {
-                    Some(remaining) if remaining > Duration::ZERO => {
+                if unusable && app.qr_texture.is_some() {
+                    ui.label(
+                        RichText::new(app.qr_unusable_caption())
+                            .font(FontId::new(11.0, FontFamily::Proportional))
+                            .strong()
+                            .color(tok::DANGER),
+                    );
+                } else if let Some(remaining) = app.qr_remaining() {
+                    if remaining > Duration::ZERO {
                         let secs = remaining.as_secs();
                         let color = if secs < 30 {
                             tok::WARN
@@ -493,28 +725,27 @@ fn render_qr_section(ui: &mut egui::Ui, app: &DaojuLoginApp, height: f32) {
                                 .font(FontId::new(11.0, FontFamily::Monospace))
                                 .color(color),
                         );
-                    }
-                    Some(_) if matches!(app.status, LoginStatus::Expired) => {
-                        ui.label(
-                            RichText::new("二维码已失效")
-                                .font(FontId::new(11.0, FontFamily::Proportional))
-                                .strong()
-                                .color(tok::DANGER),
-                        );
-                    }
-                    _ => {
+                    } else {
                         ui.label(
                             RichText::new("软件打开后自动获取")
                                 .font(FontId::new(11.0, FontFamily::Proportional))
                                 .color(tok::TEXT_FAINT),
                         );
                     }
+                } else {
+                    ui.label(
+                        RichText::new("软件打开后自动获取")
+                            .font(FontId::new(11.0, FontFamily::Proportional))
+                            .color(tok::TEXT_FAINT),
+                    );
                 }
             });
         });
+
+    clicked_to_refresh
 }
 
-fn paint_expired_overlay(ui: &mut egui::Ui, rect: egui::Rect) {
+fn paint_unusable_overlay(ui: &mut egui::Ui, rect: egui::Rect, caption: &str) {
     let painter = ui.painter();
     painter.rect_filled(
         rect,
@@ -524,7 +755,7 @@ fn paint_expired_overlay(ui: &mut egui::Ui, rect: egui::Rect) {
 
     let center = rect.center() - Vec2::new(0.0, 8.0);
 
-    // Pulse-ring: a fading expanding circle, looped every 2 seconds.
+    // Pulse-ring.
     let t = (ui.ctx().input(|i| i.time) % 2.0) / 2.0;
     let pulse_r = 22.0 + (t as f32) * 14.0;
     let pulse_a = ((1.0 - t as f32) * 110.0).max(0.0) as u8;
@@ -543,17 +774,14 @@ fn paint_expired_overlay(ui: &mut egui::Ui, rect: egui::Rect) {
     );
 
     painter.circle_filled(center, 18.0, tok::ACCENT);
+    let icon_rect = egui::Rect::from_center_size(center, Vec2::splat(20.0));
+    icons::refresh(painter, icon_rect, Color32::WHITE);
+
+    let label = format!("{caption}，点击刷新");
     painter.text(
-        center,
+        rect.center() + Vec2::new(0.0, 24.0),
         egui::Align2::CENTER_CENTER,
-        "↻",
-        FontId::new(18.0, FontFamily::Proportional),
-        Color32::WHITE,
-    );
-    painter.text(
-        rect.center() + Vec2::new(0.0, 22.0),
-        egui::Align2::CENTER_CENTER,
-        "已过期，点击刷新",
+        &label,
         FontId::new(11.0, FontFamily::Proportional),
         tok::TEXT_SOFT,
     );
@@ -579,6 +807,10 @@ fn render_operation_section(ui: &mut egui::Ui, app: &mut DaojuLoginApp, height: 
                                 .font(FontId::new(11.0, FontFamily::Proportional))
                                 .color(tok::TEXT_FAINT),
                         );
+                        ui.add_space(4.0);
+                        let (icon_rect, _) =
+                            ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                        icons::scan(ui.painter(), icon_rect, tok::TEXT_FAINT);
                     });
                 });
                 ui.add_space(14.0);
@@ -648,27 +880,27 @@ fn render_buttons_row(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
 
-        let refresh_enabled = !matches!(app.status, LoginStatus::RequestingQrCode);
-        let refresh_text = if refresh_enabled {
-            "刷新二维码"
-        } else {
-            "获取中..."
-        };
-        if ui
-            .add_enabled(
-                refresh_enabled,
-                egui::Button::new(RichText::new(refresh_text).strong().color(Color32::WHITE))
-                    .fill(tok::ACCENT)
-                    .stroke(Stroke::NONE)
-                    .corner_radius(CornerRadius::same(8))
-                    .min_size(Vec2::new(108.0, 32.0)),
-            )
-            .clicked()
-        {
+        let refreshing = matches!(app.status, LoginStatus::RequestingQrCode);
+        let refresh_text = if refreshing { "获取中..." } else { "刷新二维码" };
+        let time = ui.ctx().input(|i| i.time);
+        let refresh_resp = icon_button(
+            ui,
+            refresh_text,
+            BtnStyle::Primary,
+            !refreshing,
+            |p, r, c| {
+                if refreshing {
+                    icons::loading(p, r, c, time);
+                } else {
+                    icons::refresh(p, r, c);
+                }
+            },
+        );
+        if refresh_resp.clicked() {
             app.start_login();
         }
 
-        if secondary_button(ui, "清空日志").clicked() {
+        if icon_button(ui, "清空日志", BtnStyle::Secondary, true, icons::trash).clicked() {
             app.logs.clear();
             app.append_log_kind("日志已清空。", LogKind::Muted);
         }
@@ -676,14 +908,16 @@ fn render_buttons_row(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
         let copied = app
             .copied_logs_until
             .is_some_and(|until| Instant::now() < until);
-        if secondary_button(ui, if copied { "已复制 ✓" } else { "复制日志" }).clicked() {
+        let copy_text = if copied { "已复制 ✓" } else { "复制日志" };
+        if icon_button(ui, copy_text, BtnStyle::Secondary, true, icons::copy).clicked() {
             ui.ctx().copy_text(app.logs_text());
             app.copied_logs_until = Some(Instant::now() + Duration::from_millis(1800));
         }
 
         if let Some(result) = &app.result {
-            if secondary_button(ui, "复制登录 JSON").clicked() {
-                if let Ok(json) = serde_json::to_string_pretty(&result.raw_json) {
+            let json = serde_json::to_string_pretty(&result.raw_json).ok();
+            if icon_button(ui, "复制 JSON", BtnStyle::Secondary, true, icons::copy).clicked() {
+                if let Some(json) = json {
                     ui.ctx().copy_text(json);
                 }
             }
@@ -691,14 +925,82 @@ fn render_buttons_row(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
     });
 }
 
-fn secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.add(
-        egui::Button::new(RichText::new(text).color(tok::TEXT_SOFT))
-            .fill(tok::BG_MUTE)
-            .stroke(Stroke::NONE)
-            .corner_radius(CornerRadius::same(8))
-            .min_size(Vec2::new(86.0, 32.0)),
-    )
+fn icon_button(
+    ui: &mut egui::Ui,
+    text: &str,
+    style: BtnStyle,
+    enabled: bool,
+    icon: impl FnOnce(&egui::Painter, egui::Rect, Color32),
+) -> egui::Response {
+    let (text_color, bg_normal, bg_hover) = match style {
+        BtnStyle::Primary => (Color32::WHITE, tok::ACCENT, tok::ACCENT_HOVER),
+        BtnStyle::Secondary => (tok::TEXT_SOFT, tok::BG_MUTE, tok::BG_HOVER),
+    };
+    let icon_size = 13.0;
+    let pad_x = 14.0;
+    let pad_y = 7.0;
+    let gap = 6.0;
+    let font = FontId::new(13.0, FontFamily::Proportional);
+
+    let galley = ui.fonts(|f| f.layout_no_wrap(text.to_owned(), font, text_color));
+    let content_w = icon_size + gap + galley.size().x;
+    let total_w = content_w + pad_x * 2.0;
+    let total_h = (galley.size().y.max(icon_size) + pad_y * 2.0).max(32.0);
+    let min_w = match style {
+        BtnStyle::Primary => 110.0,
+        BtnStyle::Secondary => 90.0,
+    };
+    let final_size = Vec2::new(total_w.max(min_w), total_h);
+
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(final_size, sense);
+
+    let (bg, fg) = if !enabled {
+        (
+            Color32::from_rgba_unmultiplied(
+                bg_normal.r(),
+                bg_normal.g(),
+                bg_normal.b(),
+                165,
+            ),
+            Color32::from_rgba_unmultiplied(
+                text_color.r(),
+                text_color.g(),
+                text_color.b(),
+                210,
+            ),
+        )
+    } else if resp.hovered() {
+        (bg_hover, text_color)
+    } else {
+        (bg_normal, text_color)
+    };
+
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(8), bg);
+
+    let content_left = rect.center().x - content_w * 0.5;
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(content_left + icon_size * 0.5, rect.center().y),
+        Vec2::splat(icon_size),
+    );
+    icon(ui.painter(), icon_rect, fg);
+
+    let text_pos = egui::pos2(
+        content_left + icon_size + gap,
+        rect.center().y - galley.size().y * 0.5,
+    );
+    ui.painter().galley(text_pos, galley, fg);
+
+    if enabled && resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+
+    resp
 }
 
 fn render_log_panel(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
@@ -707,8 +1009,12 @@ fn render_log_panel(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
         .inner_margin(Margin::symmetric(20, 10))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
+                let (icon_rect, _) =
+                    ui.allocate_exact_size(Vec2::splat(15.0), Sense::hover());
+                icons::terminal(ui.painter(), icon_rect, tok::TEXT_SOFT);
+                ui.add_space(6.0);
                 ui.label(
-                    RichText::new(">_  日志输出")
+                    RichText::new("日志输出")
                         .font(FontId::new(13.0, FontFamily::Proportional))
                         .strong()
                         .color(tok::TEXT_SOFT),

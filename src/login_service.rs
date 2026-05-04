@@ -53,11 +53,11 @@ async fn run_login_flow_inner(tx: UnboundedSender<LoginEvent>) -> anyhow::Result
             }
             PollStatus::Rejected => {
                 let _ = tx.send(LoginEvent::Status(LoginStatus::Rejected));
-                bail!("本次登录已被拒绝");
+                return Ok(());
             }
             PollStatus::Expired => {
                 let _ = tx.send(LoginEvent::Status(LoginStatus::Expired));
-                bail!("二维码已失效");
+                return Ok(());
             }
             PollStatus::Success { redirect_url } => {
                 info!("QR login confirmed, starting OAuth authorization");
