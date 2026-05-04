@@ -25,8 +25,8 @@ fn main() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("道聚城扫码登录")
-            .with_inner_size([900.0, 560.0])
-            .with_min_inner_size([700.0, 460.0]),
+            .with_inner_size([860.0, 600.0])
+            .with_min_inner_size([720.0, 500.0]),
         ..Default::default()
     };
 

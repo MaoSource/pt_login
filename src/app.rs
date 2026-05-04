@@ -3,7 +3,7 @@ use crate::types::{LoginEvent, LoginResult, LoginStatus, QrCodeInfo};
 use eframe::egui;
 use egui::{
     Align, Color32, ColorImage, CornerRadius, FontData, FontDefinitions, FontFamily, FontId,
-    Layout, Margin, RichText, Stroke, TextureHandle, Vec2,
+    Layout, Margin, RichText, Sense, Stroke, TextureHandle, Vec2,
 };
 use std::fs;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -11,6 +11,31 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::task::JoinHandle;
 
 const QR_TTL: Duration = Duration::from_secs(120);
+
+// Design tokens — mirror `colors_and_type.css` from the Claude Design bundle
+// so the egui surface stays in lockstep with the source mockup.
+mod tok {
+    use eframe::egui::Color32;
+    pub const BG: Color32 = Color32::from_rgb(255, 255, 255);
+    pub const BG_SOFT: Color32 = Color32::from_rgb(247, 247, 248);
+    pub const BG_MUTE: Color32 = Color32::from_rgb(236, 236, 236);
+    pub const BG_HOVER: Color32 = Color32::from_rgb(224, 224, 224);
+    pub const TEXT: Color32 = Color32::from_rgb(13, 13, 13);
+    pub const TEXT_SOFT: Color32 = Color32::from_rgb(64, 65, 79);
+    pub const TEXT_MUTE: Color32 = Color32::from_rgb(110, 110, 128);
+    pub const TEXT_FAINT: Color32 = Color32::from_rgb(180, 180, 194);
+    pub const BORDER: Color32 = Color32::from_rgb(229, 229, 229);
+    pub const BORDER_SOFT: Color32 = Color32::from_rgb(236, 236, 236);
+    pub const ACCENT: Color32 = Color32::from_rgb(16, 163, 127);
+    pub const INFO: Color32 = Color32::from_rgb(59, 130, 246);
+    pub const WARN: Color32 = Color32::from_rgb(217, 119, 6);
+    pub const DANGER: Color32 = Color32::from_rgb(239, 68, 68);
+    pub const NEUTRAL: Color32 = Color32::from_rgb(142, 142, 160);
+    pub const CODE_BG: Color32 = Color32::from_rgb(31, 35, 41);
+    pub const CODE_FG: Color32 = Color32::from_rgb(230, 230, 230);
+    pub const CODE_TIME: Color32 = Color32::from_rgb(86, 88, 105);
+    pub const CODE_SUCCESS: Color32 = Color32::from_rgb(25, 195, 125);
+}
 
 pub struct DaojuLoginApp {
     runtime: tokio::runtime::Runtime,
@@ -246,33 +271,49 @@ fn current_time_hms() -> String {
 fn install_theme(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
     style.spacing.item_spacing = Vec2::new(8.0, 8.0);
-    style.spacing.button_padding = Vec2::new(12.0, 6.0);
-    style.spacing.window_margin = Margin::same(8);
-    style.visuals.window_fill = Color32::from_rgb(246, 247, 249);
-    style.visuals.panel_fill = Color32::from_rgb(246, 247, 249);
-    style.visuals.widgets.inactive.corner_radius = CornerRadius::same(6);
-    style.visuals.widgets.hovered.corner_radius = CornerRadius::same(6);
-    style.visuals.widgets.active.corner_radius = CornerRadius::same(6);
-    style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(232, 235, 239);
-    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(218, 225, 235);
-    style.visuals.widgets.active.bg_fill = Color32::from_rgb(197, 210, 229);
-    style.visuals.selection.bg_fill = Color32::from_rgb(54, 104, 171);
+    style.spacing.button_padding = Vec2::new(14.0, 7.0);
+    style.spacing.window_margin = Margin::same(0);
+    style.visuals.window_fill = tok::BG_SOFT;
+    style.visuals.panel_fill = tok::BG_SOFT;
+
+    let widgets = &mut style.visuals.widgets;
+    for s in [
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+        &mut widgets.open,
+        &mut widgets.noninteractive,
+    ] {
+        s.corner_radius = CornerRadius::same(8);
+        s.bg_stroke = Stroke::NONE;
+    }
+    widgets.inactive.bg_fill = tok::BG_MUTE;
+    widgets.hovered.bg_fill = tok::BG_HOVER;
+    widgets.active.bg_fill = Color32::from_rgb(208, 208, 208);
+
+    style.visuals.selection.bg_fill = tok::ACCENT;
+    style.visuals.selection.stroke = Stroke::new(1.0, tok::ACCENT);
+    style.visuals.hyperlink_color = tok::ACCENT;
 
     style.text_styles.insert(
         egui::TextStyle::Heading,
-        FontId::new(22.0, FontFamily::Proportional),
+        FontId::new(16.0, FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Body,
-        FontId::new(14.0, FontFamily::Proportional),
+        FontId::new(13.0, FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Button,
-        FontId::new(14.0, FontFamily::Proportional),
+        FontId::new(13.0, FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Small,
-        FontId::new(12.0, FontFamily::Proportional),
+        FontId::new(11.0, FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Monospace,
+        FontId::new(12.0, FontFamily::Monospace),
     );
 
     ctx.set_style(style);
@@ -280,8 +321,8 @@ fn install_theme(ctx: &egui::Context) {
 
 fn install_chinese_font(ctx: &egui::Context) {
     const FONT_PATHS: &[&str] = &[
-        "C:\\Windows\\Fonts\\msyh.ttc",              // Windows 微软雅黑
-        "C:\\Windows\\Fonts\\simsun.ttc",             // Windows 宋体
+        "C:\\Windows\\Fonts\\msyh.ttc",
+        "C:\\Windows\\Fonts\\simsun.ttc",
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         "/System/Library/Fonts/Hiragino Sans GB.ttc",
         "/System/Library/Fonts/STHeiti Medium.ttc",
@@ -325,28 +366,20 @@ impl eframe::App for DaojuLoginApp {
 
         self.drain_events(ctx);
 
-        if self.qr_loaded_at.is_some()
-            && !matches!(
-                self.status,
-                LoginStatus::Expired
-                    | LoginStatus::Rejected
-                    | LoginStatus::Success
-                    | LoginStatus::Failed
-            )
-        {
-            ctx.request_repaint_after(Duration::from_secs(1));
-        }
+        // Drive the countdown digit, the blinking cursor, and the pulse-ring
+        // animations off a steady half-second tick.
+        ctx.request_repaint_after(Duration::from_millis(500));
 
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::default()
-                    .fill(Color32::from_rgb(247, 247, 248))
+                    .fill(tok::BG_SOFT)
                     .inner_margin(Margin::same(0)),
             )
             .show(ctx, |ui| {
                 egui::Frame::default()
-                    .fill(Color32::WHITE)
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(236, 236, 236)))
+                    .fill(tok::BG)
+                    .stroke(Stroke::NONE)
                     .corner_radius(CornerRadius::same(0))
                     .inner_margin(Margin::same(0))
                     .show(ui, |ui| {
@@ -367,106 +400,98 @@ impl Drop for DaojuLoginApp {
 }
 
 fn render_top_area(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
-    let top_height = 208.0;
+    let top_height = 220.0;
+    let total_width = ui.available_width();
+    let area_top = ui.cursor().top();
+
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+
         ui.allocate_ui_with_layout(
             Vec2::new(200.0, top_height),
             Layout::top_down(Align::Center),
             |ui| render_qr_section(ui, app, top_height),
         );
 
+        let sep_x = ui.cursor().left() + 0.5;
         ui.painter().vline(
-            ui.cursor().left(),
-            ui.cursor().top()..=ui.cursor().top() + top_height,
-            Stroke::new(1.0, Color32::from_rgb(236, 236, 236)),
+            sep_x,
+            area_top..=area_top + top_height,
+            Stroke::new(1.0, tok::BORDER_SOFT),
         );
 
+        let avail = (total_width - 200.0).max(360.0);
         ui.allocate_ui_with_layout(
-            Vec2::new((ui.available_width()).max(360.0), top_height),
-            Layout::top_down(Align::Center),
+            Vec2::new(avail, top_height),
+            Layout::top_down(Align::Min),
             |ui| render_operation_section(ui, app, top_height),
         );
     });
+
+    ui.painter().hline(
+        ui.min_rect().x_range(),
+        ui.cursor().top(),
+        Stroke::new(1.0, tok::BORDER_SOFT),
+    );
 }
 
 fn render_qr_section(ui: &mut egui::Ui, app: &DaojuLoginApp, height: f32) {
     egui::Frame::default()
-        .fill(Color32::from_rgb(247, 247, 248))
-        .inner_margin(Margin::symmetric(20, 18))
+        .fill(tok::BG_SOFT)
+        .inner_margin(Margin::symmetric(20, 24))
         .show(ui, |ui| {
-            ui.set_min_size(Vec2::new(160.0, height - 36.0));
+            ui.set_min_size(Vec2::new(160.0, height));
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("扫码登录")
-                        .font(FontId::new(12.0, FontFamily::Proportional))
+                    RichText::new("扫 码 登 录")
+                        .font(FontId::new(11.0, FontFamily::Proportional))
                         .strong()
-                        .color(Color32::from_rgb(180, 180, 194)),
+                        .color(tok::TEXT_FAINT),
                 );
-                ui.add_space(10.0);
+                ui.add_space(12.0);
 
-                if let Some(texture) = &app.qr_texture {
-                    egui::Frame::default()
-                        .fill(Color32::WHITE)
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(229, 229, 229)))
-                        .corner_radius(CornerRadius::same(12))
-                        .inner_margin(Margin::same(8))
-                        .show(ui, |ui| {
-                            let response = ui.image((texture.id(), Vec2::new(124.0, 124.0)));
+                egui::Frame::default()
+                    .fill(tok::BG)
+                    .stroke(Stroke::new(1.0, tok::BORDER))
+                    .corner_radius(CornerRadius::same(12))
+                    .inner_margin(Margin::same(8))
+                    .show(ui, |ui| {
+                        let inner = Vec2::splat(124.0);
+                        if let Some(texture) = &app.qr_texture {
+                            let resp = ui.image((texture.id(), inner));
+
                             if matches!(app.status, LoginStatus::Expired) {
-                                let rect = response.rect.expand(8.0);
-                                ui.painter().rect_filled(
-                                    rect,
-                                    CornerRadius::same(12),
-                                    Color32::from_rgba_unmultiplied(255, 255, 255, 232),
-                                );
-                                ui.painter().text(
-                                    rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "已过期\n点击刷新",
-                                    FontId::new(12.0, FontFamily::Proportional),
-                                    Color32::from_rgb(64, 65, 79),
-                                );
+                                paint_expired_overlay(ui, resp.rect);
                             }
-                        });
-                } else {
-                    egui::Frame::default()
-                        .fill(Color32::WHITE)
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(229, 229, 229)))
-                        .corner_radius(CornerRadius::same(12))
-                        .inner_margin(Margin::same(8))
-                        .show(ui, |ui| {
-                            ui.set_min_size(Vec2::new(124.0, 124.0));
+                        } else {
+                            ui.set_min_size(inner);
                             ui.centered_and_justified(|ui| {
                                 ui.vertical_centered(|ui| {
-                                    ui.add(egui::Spinner::new().size(22.0));
+                                    ui.add(egui::Spinner::new().size(22.0).color(tok::ACCENT));
                                     ui.add_space(8.0);
                                     ui.label(
                                         RichText::new("获取中...")
                                             .small()
-                                            .color(Color32::from_rgb(110, 110, 128)),
+                                            .color(tok::TEXT_MUTE),
                                     );
                                 });
                             });
-                        });
-                }
+                        }
+                    });
 
-                ui.add_space(9.0);
+                ui.add_space(12.0);
                 match app.qr_remaining() {
                     Some(remaining) if remaining > Duration::ZERO => {
-                        let seconds = remaining.as_secs();
-                        let color = if seconds < 30 {
-                            Color32::from_rgb(217, 119, 6)
+                        let secs = remaining.as_secs();
+                        let color = if secs < 30 {
+                            tok::WARN
                         } else {
-                            Color32::from_rgb(180, 180, 194)
+                            tok::TEXT_FAINT
                         };
                         ui.label(
-                            RichText::new(format!(
-                                "{:02}:{:02} 后过期",
-                                seconds / 60,
-                                seconds % 60
-                            ))
-                            .font(FontId::new(11.0, FontFamily::Monospace))
-                            .color(color),
+                            RichText::new(format!("{:02}:{:02} 后过期", secs / 60, secs % 60))
+                                .font(FontId::new(11.0, FontFamily::Monospace))
+                                .color(color),
                         );
                     }
                     Some(_) if matches!(app.status, LoginStatus::Expired) => {
@@ -474,14 +499,14 @@ fn render_qr_section(ui: &mut egui::Ui, app: &DaojuLoginApp, height: f32) {
                             RichText::new("二维码已失效")
                                 .font(FontId::new(11.0, FontFamily::Proportional))
                                 .strong()
-                                .color(Color32::from_rgb(239, 68, 68)),
+                                .color(tok::DANGER),
                         );
                     }
                     _ => {
                         ui.label(
                             RichText::new("软件打开后自动获取")
                                 .font(FontId::new(11.0, FontFamily::Proportional))
-                                .color(Color32::from_rgb(180, 180, 194)),
+                                .color(tok::TEXT_FAINT),
                         );
                     }
                 }
@@ -489,264 +514,328 @@ fn render_qr_section(ui: &mut egui::Ui, app: &DaojuLoginApp, height: f32) {
         });
 }
 
+fn paint_expired_overlay(ui: &mut egui::Ui, rect: egui::Rect) {
+    let painter = ui.painter();
+    painter.rect_filled(
+        rect,
+        CornerRadius::same(8),
+        Color32::from_rgba_unmultiplied(255, 255, 255, 230),
+    );
+
+    let center = rect.center() - Vec2::new(0.0, 8.0);
+
+    // Pulse-ring: a fading expanding circle, looped every 2 seconds.
+    let t = (ui.ctx().input(|i| i.time) % 2.0) / 2.0;
+    let pulse_r = 22.0 + (t as f32) * 14.0;
+    let pulse_a = ((1.0 - t as f32) * 110.0).max(0.0) as u8;
+    painter.circle_stroke(
+        center,
+        pulse_r,
+        Stroke::new(
+            2.0,
+            Color32::from_rgba_unmultiplied(
+                tok::ACCENT.r(),
+                tok::ACCENT.g(),
+                tok::ACCENT.b(),
+                pulse_a,
+            ),
+        ),
+    );
+
+    painter.circle_filled(center, 18.0, tok::ACCENT);
+    painter.text(
+        center,
+        egui::Align2::CENTER_CENTER,
+        "↻",
+        FontId::new(18.0, FontFamily::Proportional),
+        Color32::WHITE,
+    );
+    painter.text(
+        rect.center() + Vec2::new(0.0, 22.0),
+        egui::Align2::CENTER_CENTER,
+        "已过期，点击刷新",
+        FontId::new(11.0, FontFamily::Proportional),
+        tok::TEXT_SOFT,
+    );
+}
+
 fn render_operation_section(ui: &mut egui::Ui, app: &mut DaojuLoginApp, height: f32) {
     egui::Frame::default()
-        .fill(Color32::WHITE)
-        .inner_margin(Margin::symmetric(24, 18))
+        .fill(tok::BG)
+        .inner_margin(Margin::symmetric(24, 20))
         .show(ui, |ui| {
-            ui.set_min_size(Vec2::new(ui.available_width(), height - 36.0));
+            ui.set_min_size(Vec2::new(ui.available_width(), height));
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new("操作")
                             .font(FontId::new(16.0, FontFamily::Proportional))
                             .strong()
-                            .color(Color32::from_rgb(13, 13, 13)),
+                            .color(tok::TEXT),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new("使用 QQ App 扫描左侧二维码")
                                 .font(FontId::new(11.0, FontFamily::Proportional))
-                                .color(Color32::from_rgb(180, 180, 194)),
+                                .color(tok::TEXT_FAINT),
                         );
                     });
                 });
                 ui.add_space(14.0);
-                render_status_line(ui, app);
+                render_status_row(ui, app);
                 ui.add_space(14.0);
-                ui.horizontal(|ui| {
-                    let refresh_enabled = !matches!(app.status, LoginStatus::RequestingQrCode);
-                    let refresh_text = if refresh_enabled {
-                        "刷新二维码"
-                    } else {
-                        "获取中..."
-                    };
-                    if ui
-                        .add_enabled(
-                            refresh_enabled,
-                            egui::Button::new(RichText::new(refresh_text).strong())
-                                .fill(Color32::from_rgb(16, 163, 127))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(14, 140, 108)))
-                                .corner_radius(CornerRadius::same(8))
-                                .min_size([108.0, 34.0].into()),
-                        )
-                        .clicked()
-                    {
-                        app.start_login();
-                    }
-
-                    if secondary_button(ui, "清空日志").clicked() {
-                        app.logs.clear();
-                        app.append_log_kind("日志已清空。", LogKind::Muted);
-                    }
-                    let copied = app
-                        .copied_logs_until
-                        .is_some_and(|until| Instant::now() < until);
-                    if secondary_button(ui, if copied { "已复制" } else { "复制日志" }).clicked()
-                    {
-                        ui.ctx().copy_text(app.logs_text());
-                        app.copied_logs_until = Some(Instant::now() + Duration::from_millis(1800));
-                    }
-                    if let Some(result) = &app.result {
-                        if secondary_button(ui, "复制登录 JSON").clicked() {
-                            if let Ok(json) = serde_json::to_string_pretty(&result.raw_json) {
-                                ui.ctx().copy_text(json);
-                            }
-                        }
-                    }
-                });
+                render_buttons_row(ui, app);
                 ui.add_space(12.0);
                 ui.label(
                     RichText::new("打开 QQ → 扫一扫 → 扫描二维码 → 确认登录")
                         .font(FontId::new(12.0, FontFamily::Proportional))
-                        .color(Color32::from_rgb(180, 180, 194)),
+                        .color(tok::TEXT_FAINT),
                 );
             });
         });
 }
 
-fn render_status_line(ui: &mut egui::Ui, app: &DaojuLoginApp) {
+fn render_status_row(ui: &mut egui::Ui, app: &DaojuLoginApp) {
+    let color = status_color(&app.status);
+    let bg = status_background(&app.status);
+    let border = status_border(&app.status);
+
     egui::Frame::default()
-        .fill(status_background(app.status.clone()))
-        .stroke(Stroke::new(1.0, status_border(app.status.clone())))
-        .corner_radius(CornerRadius::same(6))
-        .inner_margin(Margin::same(8))
+        .fill(bg)
+        .stroke(Stroke::new(1.0, border))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::symmetric(14, 10))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                let dot = status_color(app.status.clone());
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), egui::Sense::hover());
+                ui.spacing_mut().item_spacing.x = 10.0;
+
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
                 ui.painter().rect_filled(
                     rect,
                     CornerRadius::same(8),
-                    Color32::from_rgba_unmultiplied(dot.r(), dot.g(), dot.b(), 28),
+                    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 28),
                 );
-                ui.painter().circle_filled(rect.center(), 4.0, dot);
+                ui.painter().circle_filled(rect.center(), 3.0, color);
+
                 ui.label(
                     RichText::new(app.status.text())
+                        .font(FontId::new(13.0, FontFamily::Proportional))
                         .strong()
-                        .color(status_color(app.status.clone())),
+                        .color(color),
                 );
+
                 if matches!(
                     app.status,
                     LoginStatus::RequestingQrCode | LoginStatus::Authorizing
                 ) {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add(egui::Spinner::new().size(14.0));
+                        ui.add(egui::Spinner::new().size(14.0).color(color));
                     });
                 }
             });
             if !app.status_detail.is_empty() {
+                ui.add_space(4.0);
                 ui.label(
                     RichText::new(&app.status_detail)
                         .small()
-                        .color(Color32::from_rgb(142, 58, 58)),
+                        .color(tok::TEXT_MUTE),
                 );
             }
         });
 }
 
+fn render_buttons_row(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+
+        let refresh_enabled = !matches!(app.status, LoginStatus::RequestingQrCode);
+        let refresh_text = if refresh_enabled {
+            "刷新二维码"
+        } else {
+            "获取中..."
+        };
+        if ui
+            .add_enabled(
+                refresh_enabled,
+                egui::Button::new(RichText::new(refresh_text).strong().color(Color32::WHITE))
+                    .fill(tok::ACCENT)
+                    .stroke(Stroke::NONE)
+                    .corner_radius(CornerRadius::same(8))
+                    .min_size(Vec2::new(108.0, 32.0)),
+            )
+            .clicked()
+        {
+            app.start_login();
+        }
+
+        if secondary_button(ui, "清空日志").clicked() {
+            app.logs.clear();
+            app.append_log_kind("日志已清空。", LogKind::Muted);
+        }
+
+        let copied = app
+            .copied_logs_until
+            .is_some_and(|until| Instant::now() < until);
+        if secondary_button(ui, if copied { "已复制 ✓" } else { "复制日志" }).clicked() {
+            ui.ctx().copy_text(app.logs_text());
+            app.copied_logs_until = Some(Instant::now() + Duration::from_millis(1800));
+        }
+
+        if let Some(result) = &app.result {
+            if secondary_button(ui, "复制登录 JSON").clicked() {
+                if let Ok(json) = serde_json::to_string_pretty(&result.raw_json) {
+                    ui.ctx().copy_text(json);
+                }
+            }
+        }
+    });
+}
+
 fn secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.add(
-        egui::Button::new(RichText::new(text).color(Color32::from_rgb(64, 65, 79)))
-            .fill(Color32::from_rgb(236, 236, 236))
+        egui::Button::new(RichText::new(text).color(tok::TEXT_SOFT))
+            .fill(tok::BG_MUTE)
             .stroke(Stroke::NONE)
             .corner_radius(CornerRadius::same(8))
-            .min_size([86.0, 34.0].into()),
+            .min_size(Vec2::new(86.0, 32.0)),
     )
 }
 
 fn render_log_panel(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
-    ui.painter().hline(
-        ui.min_rect().x_range(),
-        ui.cursor().top(),
-        Stroke::new(1.0, Color32::from_rgb(236, 236, 236)),
-    );
     egui::Frame::default()
-        .fill(Color32::WHITE)
-        .inner_margin(Margin::same(0))
+        .fill(tok::BG)
+        .inner_margin(Margin::symmetric(20, 10))
         .show(ui, |ui| {
-            ui.set_min_height((ui.available_height()).max(240.0));
-            egui::Frame::default()
-                .fill(Color32::WHITE)
-                .inner_margin(Margin::symmetric(10, 8))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("日志输出")
-                                .font(FontId::new(13.0, FontFamily::Proportional))
-                                .strong()
-                                .color(Color32::from_rgb(64, 65, 79)),
-                        );
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(">_  日志输出")
+                        .font(FontId::new(13.0, FontFamily::Proportional))
+                        .strong()
+                        .color(tok::TEXT_SOFT),
+                );
+
+                ui.add_space(2.0);
+                egui::Frame::default()
+                    .fill(tok::BG_MUTE)
+                    .corner_radius(CornerRadius::same(12))
+                    .inner_margin(Margin::symmetric(8, 2))
+                    .show(ui, |ui| {
                         ui.label(
                             RichText::new(format!("{} 条", app.logs.len()))
                                 .font(FontId::new(11.0, FontFamily::Proportional))
-                                .color(Color32::from_rgb(110, 110, 128))
-                                .background_color(Color32::from_rgb(236, 236, 236)),
+                                .color(tok::TEXT_MUTE),
                         );
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new("清空")
-                                            .font(FontId::new(11.0, FontFamily::Proportional))
-                                            .color(Color32::from_rgb(180, 180, 194)),
-                                    )
-                                    .fill(Color32::TRANSPARENT)
-                                    .stroke(Stroke::NONE),
-                                )
-                                .clicked()
-                            {
-                                app.logs.clear();
-                            }
-                        });
                     });
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new("清空")
+                                    .font(FontId::new(11.0, FontFamily::Proportional))
+                                    .color(tok::TEXT_FAINT),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::NONE),
+                        )
+                        .clicked()
+                    {
+                        app.logs.clear();
+                    }
                 });
+            });
+        });
 
-            egui::Frame::default()
-                .fill(Color32::from_rgb(31, 35, 41))
-                .inner_margin(Margin::symmetric(20, 12))
+    ui.painter().hline(
+        ui.min_rect().x_range(),
+        ui.cursor().top(),
+        Stroke::new(1.0, tok::BORDER_SOFT),
+    );
+
+    egui::Frame::default()
+        .fill(tok::CODE_BG)
+        .inner_margin(Margin::symmetric(20, 12))
+        .show(ui, |ui| {
+            ui.set_min_height(ui.available_height().max(220.0));
+
+            let blink = (ui.ctx().input(|i| i.time) % 1.0) < 0.5;
+
+            egui::ScrollArea::vertical()
+                .stick_to_bottom(true)
+                .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.set_min_height((ui.available_height()).max(220.0));
-                    egui::ScrollArea::vertical()
-                        .stick_to_bottom(true)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            if app.logs.is_empty() {
-                                ui.vertical_centered(|ui| {
-                                    ui.add_space(72.0);
-                                    ui.label(
-                                        RichText::new("暂无日志")
-                                            .font(FontId::new(12.0, FontFamily::Monospace))
-                                            .color(Color32::from_rgb(86, 88, 105)),
-                                    );
-                                });
-                            }
+                    ui.set_width(ui.available_width());
+                    if app.logs.is_empty() {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(72.0);
+                            ui.label(
+                                RichText::new("暂无日志")
+                                    .font(FontId::new(12.0, FontFamily::Monospace))
+                                    .color(tok::CODE_TIME),
+                            );
+                        });
+                    }
 
-                            let last_index = app.logs.len().saturating_sub(1);
-                            for (index, entry) in app.logs.iter().enumerate() {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 10.0;
-                                    ui.label(
-                                        RichText::new(&entry.time)
-                                            .font(FontId::new(11.0, FontFamily::Monospace))
-                                            .color(Color32::from_rgb(86, 88, 105)),
-                                    );
-                                    let mut text = entry.line.clone();
-                                    if index == last_index {
-                                        text.push('_');
-                                    }
-                                    ui.label(
-                                        RichText::new(text)
-                                            .font(FontId::new(12.0, FontFamily::Monospace))
-                                            .color(log_color(entry.kind)),
-                                    );
-                                });
+                    let last_index = app.logs.len().saturating_sub(1);
+                    for (index, entry) in app.logs.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 10.0;
+                            ui.label(
+                                RichText::new(&entry.time)
+                                    .font(FontId::new(11.0, FontFamily::Monospace))
+                                    .color(tok::CODE_TIME),
+                            );
+                            let resp = ui.label(
+                                RichText::new(&entry.line)
+                                    .font(FontId::new(12.0, FontFamily::Monospace))
+                                    .color(log_color(entry.kind)),
+                            );
+
+                            if index == last_index && blink {
+                                let r = resp.rect;
+                                let cursor_x = r.right() + 4.0;
+                                let cursor_y = r.center().y;
+                                ui.painter().rect_filled(
+                                    egui::Rect::from_center_size(
+                                        egui::pos2(cursor_x, cursor_y),
+                                        Vec2::new(2.0, 12.0),
+                                    ),
+                                    CornerRadius::same(0),
+                                    tok::CODE_SUCCESS,
+                                );
                             }
                         });
+                    }
                 });
         });
 }
 
 fn log_color(kind: LogKind) -> Color32 {
     match kind {
-        LogKind::Info => Color32::from_rgb(230, 230, 230),
-        LogKind::Success => Color32::from_rgb(25, 195, 125),
-        LogKind::Warn => Color32::from_rgb(217, 119, 6),
-        LogKind::Error => Color32::from_rgb(239, 68, 68),
-        LogKind::Muted => Color32::from_rgb(86, 88, 105),
+        LogKind::Info => tok::CODE_FG,
+        LogKind::Success => tok::CODE_SUCCESS,
+        LogKind::Warn => tok::WARN,
+        LogKind::Error => tok::DANGER,
+        LogKind::Muted => tok::CODE_TIME,
     }
 }
 
-fn status_color(status: LoginStatus) -> Color32 {
+fn status_color(status: &LoginStatus) -> Color32 {
     match status {
-        LoginStatus::Success => Color32::from_rgb(37, 128, 82),
-        LoginStatus::Failed | LoginStatus::Rejected | LoginStatus::Expired => {
-            Color32::from_rgb(180, 65, 65)
-        }
-        LoginStatus::Idle => Color32::from_rgb(128, 137, 150),
-        _ => Color32::from_rgb(45, 94, 160),
+        LoginStatus::Idle | LoginStatus::RequestingQrCode => tok::NEUTRAL,
+        LoginStatus::WaitingScan => tok::INFO,
+        LoginStatus::Authenticating | LoginStatus::Authorizing => tok::WARN,
+        LoginStatus::Success => tok::ACCENT,
+        LoginStatus::Failed | LoginStatus::Rejected | LoginStatus::Expired => tok::DANGER,
     }
 }
 
-fn status_background(status: LoginStatus) -> Color32 {
-    match status {
-        LoginStatus::Success => Color32::from_rgb(235, 247, 240),
-        LoginStatus::Failed | LoginStatus::Rejected | LoginStatus::Expired => {
-            Color32::from_rgb(253, 239, 239)
-        }
-        LoginStatus::Idle => Color32::from_rgb(240, 242, 245),
-        _ => Color32::from_rgb(235, 242, 252),
-    }
+fn status_background(status: &LoginStatus) -> Color32 {
+    let c = status_color(status);
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 20)
 }
 
-fn status_border(status: LoginStatus) -> Color32 {
-    match status {
-        LoginStatus::Success => Color32::from_rgb(188, 226, 205),
-        LoginStatus::Failed | LoginStatus::Rejected | LoginStatus::Expired => {
-            Color32::from_rgb(238, 196, 196)
-        }
-        LoginStatus::Idle => Color32::from_rgb(218, 222, 229),
-        _ => Color32::from_rgb(196, 213, 238),
-    }
+fn status_border(status: &LoginStatus) -> Color32 {
+    let c = status_color(status);
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 48)
 }
