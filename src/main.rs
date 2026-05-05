@@ -4,6 +4,7 @@ mod jsonp;
 mod login_service;
 mod qq_util;
 mod types;
+mod user_service;
 
 use anyhow::Context;
 use app::DaojuLoginApp;

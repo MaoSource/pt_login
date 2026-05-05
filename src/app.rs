@@ -1,5 +1,8 @@
 use crate::login_service;
-use crate::types::{LoginEvent, LoginResult, LoginStatus, QrCodeInfo};
+use crate::types::{
+    AccountSession, LoginEvent, LoginResult, LoginStatus, QrCodeInfo, UserInfo, UserInfoEvent,
+};
+use crate::user_service;
 use eframe::egui;
 use egui::{
     Align, Color32, ColorImage, CornerRadius, FontData, FontDefinitions, FontFamily, FontId,
@@ -222,6 +225,12 @@ pub struct DaojuLoginApp {
     qr_loaded_at: Option<Instant>,
     qr_base64_len: usize,
     result: Option<LoginResult>,
+    session: Option<AccountSession>,
+    user_info: Option<UserInfo>,
+    user_info_rx: Option<UnboundedReceiver<UserInfoEvent>>,
+    user_info_task: Option<JoinHandle<()>>,
+    user_info_refreshing: bool,
+    avatar_texture: Option<TextureHandle>,
     logs: Vec<LogEntry>,
     copied_logs_until: Option<Instant>,
     auto_started: bool,
@@ -260,6 +269,12 @@ impl DaojuLoginApp {
             qr_loaded_at: None,
             qr_base64_len: 0,
             result: None,
+            session: None,
+            user_info: None,
+            user_info_rx: None,
+            user_info_task: None,
+            user_info_refreshing: false,
+            avatar_texture: None,
             logs: Vec::new(),
             copied_logs_until: None,
             auto_started: false,
@@ -281,6 +296,13 @@ impl DaojuLoginApp {
         self.status = LoginStatus::RequestingQrCode;
         self.status_detail.clear();
         self.result = None;
+        self.session = None;
+        self.user_info = None;
+        self.avatar_texture = None;
+        self.user_info_refreshing = false;
+        if let Some(t) = self.user_info_task.take() {
+            t.abort();
+        }
         self.qr_texture = None;
         self.qr_loaded_at = None;
         self.qr_base64_len = 0;
@@ -332,7 +354,25 @@ impl DaojuLoginApp {
                     } else {
                         self.append_log_kind("登录成功，但结果 JSON 格式化失败。", LogKind::Warn);
                     }
+                    let session = result.session(login_service::APP_ID);
                     self.result = Some(result);
+                    if let Some(s) = session {
+                        self.append_log_kind(
+                            format!(
+                                "已保存会话凭证：openid={}, access_token={}…",
+                                s.openid,
+                                &s.access_token[..8.min(s.access_token.len())]
+                            ),
+                            LogKind::Info,
+                        );
+                        self.session = Some(s);
+                        self.start_user_info_fetch();
+                    } else {
+                        self.append_log_kind(
+                            "登录返回缺少 access_token / openid，无法保存会话。",
+                            LogKind::Warn,
+                        );
+                    }
                 }
                 LoginEvent::Error(message) => {
                     self.status = LoginStatus::Failed;
@@ -418,6 +458,74 @@ impl DaojuLoginApp {
             LoginStatus::Rejected => "本次登录已取消",
             LoginStatus::Failed => "登录失败",
             _ => "",
+        }
+    }
+
+    fn is_logged_in(&self) -> bool {
+        self.session.is_some()
+    }
+
+    fn start_user_info_fetch(&mut self) {
+        let Some(session) = self.session.clone() else {
+            return;
+        };
+        if let Some(task) = self.user_info_task.take() {
+            task.abort();
+        }
+        self.user_info_refreshing = true;
+        self.append_log_kind("正在获取用户信息...", LogKind::Info);
+
+        let (tx, rx) = unbounded_channel();
+        self.user_info_rx = Some(rx);
+        self.user_info_task = Some(self.runtime.spawn(async move {
+            user_service::fetch_user_info(session, tx).await;
+        }));
+    }
+
+    fn drain_user_info_events(&mut self, ctx: &egui::Context) {
+        let Some(rx) = &mut self.user_info_rx else {
+            return;
+        };
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        for event in events {
+            match event {
+                UserInfoEvent::Loaded(info) => {
+                    self.user_info_refreshing = false;
+                    self.load_avatar_texture(ctx, &info.avatar_bytes);
+                    self.append_log_kind(
+                        format!("用户信息已更新：{}", info.nickname),
+                        LogKind::Success,
+                    );
+                    self.user_info = Some(info);
+                }
+                UserInfoEvent::Error(message) => {
+                    self.user_info_refreshing = false;
+                    self.append_log_kind(
+                        format!("用户信息获取失败：{message}"),
+                        LogKind::Error,
+                    );
+                }
+            }
+            ctx.request_repaint();
+        }
+    }
+
+    fn load_avatar_texture(&mut self, ctx: &egui::Context, bytes: &[u8]) {
+        match image::load_from_memory(bytes) {
+            Ok(img) => {
+                let rgba = img.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let pixels = rgba.into_raw();
+                let color_image = ColorImage::from_rgba_unmultiplied(size, &pixels);
+                self.avatar_texture =
+                    Some(ctx.load_texture("avatar", color_image, Default::default()));
+            }
+            Err(err) => {
+                self.append_log_kind(format!("头像加载失败：{err}"), LogKind::Warn);
+            }
         }
     }
 
@@ -554,6 +662,7 @@ impl eframe::App for DaojuLoginApp {
         }
 
         self.drain_events(ctx);
+        self.drain_user_info_events(ctx);
 
         // Drive countdown digits, blinking cursor, pulse-ring, and the
         // in-button spinner off a steady tick.
@@ -592,6 +701,7 @@ fn render_top_area(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
     let top_height = 220.0;
     let total_width = ui.available_width();
     let area_top = ui.cursor().top();
+    let logged_in = app.is_logged_in();
 
     let mut click_to_refresh = false;
 
@@ -602,7 +712,9 @@ fn render_top_area(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
             Vec2::new(200.0, top_height),
             Layout::top_down(Align::Center),
             |ui| {
-                if render_qr_section(ui, app, top_height) {
+                if logged_in {
+                    render_account_section(ui, app, top_height);
+                } else if render_qr_section(ui, app, top_height) {
                     click_to_refresh = true;
                 }
             },
@@ -619,7 +731,13 @@ fn render_top_area(ui: &mut egui::Ui, app: &mut DaojuLoginApp) {
         ui.allocate_ui_with_layout(
             Vec2::new(avail, top_height),
             Layout::top_down(Align::Min),
-            |ui| render_operation_section(ui, app, top_height),
+            |ui| {
+                if logged_in {
+                    render_logged_in_section(ui, app, top_height);
+                } else {
+                    render_operation_section(ui, app, top_height);
+                }
+            },
         );
     });
 
@@ -743,6 +861,159 @@ fn render_qr_section(ui: &mut egui::Ui, app: &DaojuLoginApp, height: f32) -> boo
         });
 
     clicked_to_refresh
+}
+
+fn render_account_section(ui: &mut egui::Ui, app: &DaojuLoginApp, height: f32) {
+    egui::Frame::default()
+        .fill(tok::BG_SOFT)
+        .inner_margin(Margin::symmetric(20, 24))
+        .show(ui, |ui| {
+            ui.set_min_size(Vec2::new(160.0, height));
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("已 登 录")
+                        .font(FontId::new(11.0, FontFamily::Proportional))
+                        .strong()
+                        .color(tok::ACCENT),
+                );
+                ui.add_space(12.0);
+
+                let avatar_size = Vec2::splat(96.0);
+                if let Some(tex) = &app.avatar_texture {
+                    ui.add(
+                        egui::Image::new((tex.id(), avatar_size))
+                            .corner_radius(48),
+                    );
+                } else {
+                    ui.allocate_ui_with_layout(
+                        avatar_size,
+                        Layout::top_down(Align::Center),
+                        |ui| {
+                            ui.set_min_size(avatar_size);
+                            ui.add_space((avatar_size.y - 22.0) * 0.5);
+                            ui.add(
+                                egui::Spinner::new()
+                                    .size(22.0)
+                                    .color(tok::ACCENT),
+                            );
+                        },
+                    );
+                }
+
+                ui.add_space(12.0);
+                if let Some(info) = &app.user_info {
+                    ui.label(
+                        RichText::new(&info.nickname)
+                            .font(FontId::new(14.0, FontFamily::Proportional))
+                            .strong()
+                            .color(tok::TEXT),
+                    );
+                } else if app.user_info_refreshing {
+                    ui.label(
+                        RichText::new("加载用户信息...")
+                            .font(FontId::new(11.0, FontFamily::Proportional))
+                            .color(tok::TEXT_MUTE),
+                    );
+                } else {
+                    ui.label(
+                        RichText::new("点击「刷新用户信息」")
+                            .font(FontId::new(11.0, FontFamily::Proportional))
+                            .color(tok::TEXT_MUTE),
+                    );
+                }
+            });
+        });
+}
+
+fn render_logged_in_section(ui: &mut egui::Ui, app: &mut DaojuLoginApp, height: f32) {
+    egui::Frame::default()
+        .fill(tok::BG)
+        .inner_margin(Margin::symmetric(24, 20))
+        .show(ui, |ui| {
+            ui.set_min_size(Vec2::new(ui.available_width(), height));
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("操作")
+                            .font(FontId::new(16.0, FontFamily::Proportional))
+                            .strong()
+                            .color(tok::TEXT),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if let Some(session) = &app.session {
+                            let openid = &session.openid;
+                            let short = if openid.len() > 12 {
+                                format!("{}…{}", &openid[..6], &openid[openid.len() - 4..])
+                            } else {
+                                openid.clone()
+                            };
+                            ui.label(
+                                RichText::new(format!("openid {short}"))
+                                    .font(FontId::new(11.0, FontFamily::Monospace))
+                                    .color(tok::TEXT_FAINT),
+                            );
+                        }
+                    });
+                });
+                ui.add_space(14.0);
+                render_status_row(ui, app);
+                ui.add_space(14.0);
+
+                let refreshing = app.user_info_refreshing;
+                let refresh_text = if refreshing {
+                    "正在刷新..."
+                } else {
+                    "刷新用户信息"
+                };
+                let time = ui.ctx().input(|i| i.time);
+                let resp = icon_button(
+                    ui,
+                    refresh_text,
+                    BtnStyle::Primary,
+                    !refreshing,
+                    |p, r, c| {
+                        if refreshing {
+                            icons::loading(p, r, c, time);
+                        } else {
+                            icons::refresh(p, r, c);
+                        }
+                    },
+                );
+                if resp.clicked() {
+                    app.start_user_info_fetch();
+                }
+
+                ui.add_space(12.0);
+                if let Some(info) = &app.user_info {
+                    let gender = info
+                        .raw_json
+                        .get("gender")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("-");
+                    let province = info
+                        .raw_json
+                        .get("province")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("-");
+                    let city = info
+                        .raw_json
+                        .get("city")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("-");
+                    ui.label(
+                        RichText::new(format!("{gender} · {province} · {city}"))
+                            .font(FontId::new(12.0, FontFamily::Proportional))
+                            .color(tok::TEXT_FAINT),
+                    );
+                } else {
+                    ui.label(
+                        RichText::new("登录凭证已保存，可用于后续接口调用")
+                            .font(FontId::new(12.0, FontFamily::Proportional))
+                            .color(tok::TEXT_FAINT),
+                    );
+                }
+            });
+        });
 }
 
 fn paint_unusable_overlay(ui: &mut egui::Ui, rect: egui::Rect, caption: &str) {

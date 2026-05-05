@@ -42,6 +42,38 @@ pub struct LoginResult {
     pub raw_json: Value,
 }
 
+impl LoginResult {
+    pub fn session(&self, appid: &str) -> Option<AccountSession> {
+        let access_token = self.raw_json.get("access_token")?.as_str()?.to_owned();
+        let openid = self.raw_json.get("openid")?.as_str()?.to_owned();
+        Some(AccountSession {
+            appid: appid.to_owned(),
+            openid,
+            access_token,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AccountSession {
+    pub appid: String,
+    pub openid: String,
+    pub access_token: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserInfo {
+    pub nickname: String,
+    pub avatar_bytes: Vec<u8>,
+    pub raw_json: Value,
+}
+
+#[derive(Debug, Clone)]
+pub enum UserInfoEvent {
+    Loaded(UserInfo),
+    Error(String),
+}
+
 #[derive(Debug, Clone)]
 pub enum LoginEvent {
     Status(LoginStatus),

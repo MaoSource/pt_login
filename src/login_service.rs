@@ -17,7 +17,7 @@ use tokio::time::sleep;
 use tracing::{info, warn};
 use url::Url;
 
-const APP_ID: &str = "1101958653";
+pub const APP_ID: &str = "1101958653";
 const CLIENT_ID: &str = "1101958653";
 const REDIRECT_URI: &str = "https://daoju.qq.com/connect/qc_redirect.html";
 const USER_AGENT_VALUE: &str =
